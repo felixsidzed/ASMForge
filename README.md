@@ -1,2 +1,2 @@
 # ASMForge (WIP)
-A user-friendly x64 assembly building library for C++.
+A user-friendly interface for building x86 assembly.
