@@ -58,7 +58,7 @@ namespace ASMForge {
 		const std::vector<std::unique_ptr<SubRoutineBuilder>>& GetSubRoutines() const;
 
 		uint8_t* EmitToMemory(size_t* size);
-		uint8_t* EmitCOFF(size_t* size);
+		uint8_t* EmitCOFF(size_t* size, const std::string& entry = "_main");
 	};
 
 	class SubRoutineBuilder {

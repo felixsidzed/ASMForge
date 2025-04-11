@@ -4,50 +4,53 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
-struct COFFHeader {
-	uint16_t machine;
-	uint16_t numSections;
-	uint32_t timestamp;
-	uint32_t symbolTablePointer;
-	uint32_t numSymbols;
-	uint16_t optionalHeaderSize;
-	uint16_t characteristics;
-};
-
-struct COFFSymbol {
-	union {
-		char name[8];
-		uint32_t namePointer;
-	};
-	uint32_t value;
-	uint16_t sectionNumber;
-	uint16_t type;
-	uint8_t storageClass;
-	uint8_t numAuxEntries;
+#pragma pack(push, 1)
+struct CoffFileHeader {
+	uint16_t Machine;
+	uint16_t NumberOfSections;
+	uint32_t TimeDateStamp = std::time(nullptr);
+	uint32_t PointerToSymbolTable;
+	uint32_t NumberOfSymbols;
+	uint16_t SizeOfOptionalHeader;
+	uint16_t Characteristics;
 };
 
 struct SectionHeader {
-	char name[8];
-	uint32_t virtualSize;
-	uint32_t virtualAddress;
-	uint32_t sizeOfRawData;
-	uint32_t pointerToRawData;
-	uint32_t pointerToRelocations;
-	uint32_t pointerToLinenumbers;
-	uint16_t numRelocations;
-	uint16_t numLinenumbers;
-	uint32_t characteristics;
+	char Name[8];
+	uint32_t VirtualSize;
+	uint32_t VirtualAddress;
+	uint32_t SizeOfRawData;
+	uint32_t PointerToRawData;
+	uint32_t PointerToRelocations;
+	uint32_t PointerToLinenumbers;
+	uint16_t NumberOfRelocations;
+	uint16_t NumberOfLinenumbers;
+	uint32_t Characteristics;
 };
+
+struct CoffSymbol {
+	union {
+		char ShortName[8];
+		struct {
+			uint32_t Zeroes;
+			uint32_t Offset;
+		};
+	};
+	uint32_t Value;
+	int16_t SectionNumber;
+	uint16_t Type;
+	uint8_t StorageClass;
+	uint8_t NumberOfAuxSymbols;
+};
+#pragma pack(pop, 1)
 
 #ifndef NDEBUG
 	#define assert(condition, message) \
-	do { \
-		if (! (condition)) { \
-			std::cerr << "Assertion `" #condition "` failed in " << __FILE__ \
-						<< " line " << __LINE__ << ": " << message << std::endl; \
-			std::terminate(); \
-		} \
-	} while (false)
+	if (!(condition)) { \
+		std::cerr << "Assertion `" #condition "` failed in " << __FILE__ \
+					<< " line " << __LINE__ << ": " << message << std::endl; \
+		std::terminate(); \
+	}
 #else
 	#define assert(condition, message) (void)0
 #endif
@@ -183,7 +186,15 @@ namespace ASMForge {
 		return moduleMemory;
 	}
 
-	uint8_t* ModuleBuilder::EmitCOFF(size_t* size) {
+	uint8_t* ModuleBuilder::EmitCOFF(size_t* size, const std::string& entry) {
+		bool hasEntryPoint = false;
+		for (const auto& R : GetSubRoutines()) {
+			if (R->name == entry) {
+				hasEntryPoint = true;
+			}
+		}
+		assert(hasEntryPoint, "No entry point found.")
+
 		size_t sizeCode = 0;
 		uint8_t* code = EmitToMemory(&sizeCode);
 		if (!code || sizeCode == 0) {
@@ -191,76 +202,63 @@ namespace ASMForge {
 			return nullptr;
 		}
 
-		COFFHeader header = {};
-		header.machine = is64Bit ? 0x8664 : 0x14c;
-		header.timestamp = static_cast<uint32_t>(time(nullptr));
-		header.numSections = 1;
-		header.numSymbols = 1;
-		header.symbolTablePointer = sizeof(COFFHeader) + sizeof(IMAGE_OPTIONAL_HEADER) + sizeof(SectionHeader) + sizeCode;
-		header.optionalHeaderSize = sizeof(IMAGE_OPTIONAL_HEADER);
-		header.characteristics = 0x0002 | 0x0100; // EXECUTABLE_IMAGE | 32BIT_MACHINE
+		CoffFileHeader coffHeader = {};
+		SectionHeader textHeader = {};
 
-		// TODO: This is more common in PE files, not COFF files
+		uint32_t afterHeaders = sizeof(CoffFileHeader) + sizeof(SectionHeader);
+
+		textHeader.SizeOfRawData = (uint32_t)sizeCode;
+		textHeader.PointerToRawData = afterHeaders;
+		textHeader.VirtualSize = (uint32_t)sizeCode;
+		memcpy(textHeader.Name, ".text\0\0\0", 5);
+		textHeader.Characteristics = 0x60000020; // code | execute | read
+
+		coffHeader.Machine = 0x8664;
+		coffHeader.NumberOfSections = 1;
+		coffHeader.TimeDateStamp = (uint32_t)time(nullptr);
+		coffHeader.PointerToSymbolTable = afterHeaders + (uint32_t)sizeCode;
+		coffHeader.NumberOfSymbols = 1;
+		coffHeader.SizeOfOptionalHeader = 0;
+
 		if (is64Bit)
-			header.characteristics |= 0x0020; // LARGE_ADDRESS_AWARE
+			coffHeader.Characteristics |= 0x0020; // IMAGE_FILE_LARGE_ADDRESS_AWARE
+		else
+			coffHeader.Machine = 0x14c; // IMAGE_FILE_MACHINE_I386
 
-		SectionHeader text = {};
-		strcpy_s(text.name, ".text"); // assert failed here: Buffer is too small.
-		text.virtualSize = (uint32_t)sizeCode;
-		text.virtualAddress = 0x1000;
-		text.sizeOfRawData = (uint32_t)sizeCode;
-		text.pointerToRawData = sizeof(COFFHeader) + sizeof(IMAGE_OPTIONAL_HEADER) + sizeof(SectionHeader);
-		text.pointerToRelocations = 0;
-		text.pointerToLinenumbers = 0;
-		text.numRelocations = 0;
-		text.numLinenumbers = 0;
-		text.characteristics =
-			0x00000020 | // IMAGE_SCN_CNT_CODE
-			0x20000000 | // IMAGE_SCN_MEM_EXECUTE
-			0x40000000;  // IMAGE_SCN_MEM_READ
+		CoffSymbol entrySymbol = {};
+		strncpy_s(entrySymbol.ShortName, entry.c_str(), 8);
+		entrySymbol.Value = 0;
+		entrySymbol.SectionNumber = 1;
+		entrySymbol.Type = 0x20;
+		entrySymbol.StorageClass = 2;
+		entrySymbol.NumberOfAuxSymbols = 0;
 
-		size_t totalSize = sizeof(COFFHeader) + sizeof(IMAGE_OPTIONAL_HEADER) + sizeof(SectionHeader) + sizeCode + (sizeof(COFFSymbol) * header.numSymbols);
-		uint8_t* buf = new uint8_t[totalSize];
+		uint32_t stringTableSize = 4;
 
-		size_t offset = 0;
+		*size = sizeof(CoffFileHeader) +
+			sizeof(SectionHeader) +
+			(uint32_t)sizeCode +
+			sizeof(CoffSymbol) +
+			sizeof(uint32_t);
 
-		// No idea how to fix this warning 🤷‍
-		// I'm pretty sure it's just MSVC acting out and not an issue on my end
-		#pragma warning(push)
-		#pragma warning(disable : 6386)
-		memcpy(buf, &header, sizeof(COFFHeader));
-		offset += sizeof(COFFHeader);
-		#pragma warning(pop)
+		uint8_t* buffer = new uint8_t[*size];
+		uint8_t* ptr = buffer;
 
-		IMAGE_OPTIONAL_HEADER optionalHeader = {};
-		optionalHeader.Magic = is64Bit ? 0x020b : 0x010b;
-		optionalHeader.AddressOfEntryPoint = text.virtualAddress;
-		optionalHeader.ImageBase = 0x40000;
+		memcpy(ptr, &coffHeader, sizeof(CoffFileHeader));
+		ptr += sizeof(CoffFileHeader);
 
-		memcpy(buf + offset, &optionalHeader, sizeof(IMAGE_OPTIONAL_HEADER));
-		offset += sizeof(IMAGE_OPTIONAL_HEADER);
+		memcpy(ptr, &textHeader, sizeof(SectionHeader));
+		ptr += sizeof(SectionHeader);
 
-		memcpy(buf + offset, &text, sizeof(SectionHeader));
-		offset += sizeof(SectionHeader);
+		memcpy(ptr, code, (uint32_t)sizeCode);
+		ptr += (uint32_t)sizeCode;
 
-		memcpy(buf + offset, code, sizeCode);
-		offset += sizeCode;
+		memcpy(ptr, &entrySymbol, sizeof(CoffSymbol));
+		ptr += sizeof(CoffSymbol);
 
-		// TODO: This doesnt seem to work...
-		COFFSymbol symEntry = {};
-		strcpy_s(symEntry.name, 8, "main");
-		symEntry.value = text.virtualAddress;
-		symEntry.sectionNumber = 1;
-		symEntry.type = 0x20;
-		symEntry.storageClass = IMAGE_SYM_CLASS_EXTERNAL;
-		symEntry.numAuxEntries = 0;
+		memcpy(ptr, &stringTableSize, sizeof(uint32_t));
+		ptr += stringTableSize;
 
-		memcpy(buf + offset, &symEntry, sizeof(COFFSymbol));
-		offset += sizeof(COFFSymbol);
-
-		delete[] code;
-		*size = totalSize;
-
-		return buf;
+		return buffer;
 	}
 }

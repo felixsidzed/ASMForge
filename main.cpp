@@ -7,7 +7,7 @@
 int main() {
 	ASMForge::ModuleBuilder* M = ASMForge::New("Test", false);
 
-	ASMForge::SubRoutineBuilder* func = M->CreateSubRoutine("main");
+	ASMForge::SubRoutineBuilder* func = M->CreateSubRoutine("_main");
 	func->Append(func->Create(ASMForge::OpCode::MOV, ASMForge::Reg::AX, 6969));
 	func->Append(func->Create(ASMForge::OpCode::RET));
 
@@ -28,7 +28,7 @@ int main() {
 	}
 
 	std::cout << std::dec << std::endl;
-
+	
 	std::ofstream out(M->name + ".o", std::ios::binary);
 	if (out) {
 		out.write(reinterpret_cast<char*>(code), size);

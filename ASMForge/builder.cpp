@@ -1,5 +1,7 @@
 #include "builder.h"
 
+#include <iostream>
+
 namespace ASMForge {
 	SubRoutineBuilder::SubRoutineBuilder(const std::string& routineName, ModuleBuilder* parentModule) 
 		: name(routineName), M(parentModule) {}
@@ -18,9 +20,16 @@ namespace ASMForge {
 	}
 
 	SubRoutineBuilder* ModuleBuilder::CreateSubRoutine(const std::string& routineName) {
-		auto routine = std::make_unique<SubRoutineBuilder>(routineName, this);
-		SubRoutineBuilder* ptr = routine.get();
-		subRoutines.push_back(std::move(routine));
+		for (const auto& subRoutine : GetSubRoutines()) {
+			if (subRoutine->name == routineName) {
+				std::cerr << "A subroutine with the name '" << routineName << "' already exists." << std::endl;
+				std::terminate();
+			}
+		}
+
+		auto R = std::make_unique<SubRoutineBuilder>(routineName, this);
+		SubRoutineBuilder* ptr = R.get();
+		subRoutines.push_back(std::move(R));
 		return ptr;
 	}
 
