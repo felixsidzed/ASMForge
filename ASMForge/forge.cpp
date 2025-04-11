@@ -3,8 +3,8 @@
 #include <iostream>
 
 namespace ASMForge {
-	ModuleBuilder* New(const std::string& name, bool is64Bit) {
-		ModuleBuilder* M = new ModuleBuilder(name, is64Bit);
+	ExtendedModuleBuilder* New(const std::string& name, bool is64Bit) {
+		ExtendedModuleBuilder* M = new ExtendedModuleBuilder(name, is64Bit);
 
 		return M;
 	}
